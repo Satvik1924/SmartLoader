@@ -10,12 +10,45 @@ int total_mem_allocated = 0;
 int total_mem_used = 0;
 int no_page_allocation = 0;
 
+typedef struct MemoryNode {
+    void *address;
+    size_t size;
+    struct MemoryNode *next;
+} MemoryNode;
+
+MemoryNode *head = NULL;
+
+void add_memory_allocation(void *address, size_t size) {
+    MemoryNode *new_node = (MemoryNode *)malloc(sizeof(MemoryNode));
+    if (new_node == NULL) {
+        perror("Error allocating memory for linked list node");
+        return;
+    }
+    new_node->address = address;
+    new_node->size = size;
+    new_node->next = head;
+    head = new_node;
+}
+
+void free_all_allocations() {
+    MemoryNode *current = head;
+    while (current != NULL) {
+        munmap(current->address, current->size);
+        MemoryNode *temp = current;
+        current = current->next;
+        free(temp);
+    }
+    head = NULL;
+}
+
 void segfault_handler(int signo, siginfo_t *info, void *context)
 {
   no_page_fault++;
   printf("Segmentation fault occurred. Address: %p\n", info->si_addr);
   Elf32_Phdr *entry_phdr = NULL;
-  for (int i = 0; i < ehdr->e_phnum; i++)
+  int i = 0;
+
+  while (i < ehdr->e_phnum)
   {
     if ((void *)info->si_addr >= (void *)phdr[i].p_vaddr && (void *)info->si_addr < (void *)(phdr[i].p_vaddr + phdr[i].p_memsz))
     {
@@ -42,11 +75,12 @@ void segfault_handler(int signo, siginfo_t *info, void *context)
         perror("Error in memory mapping through mmap");
         break;
       }
+      add_memory_allocation(virtual_mem, mem_size);
       memcpy(virtual_mem, (void *)((char *)a + entry_phdr->p_offset), mem_size);
       virtual_mem = (char *)(virtual_mem);
-      // printf("Found phdr.");
       break;
     }
+    i++;
   }
 
   if (entry_phdr == NULL)
@@ -56,12 +90,9 @@ void segfault_handler(int signo, siginfo_t *info, void *context)
   }
 }
 
-/*
- * release memory and other cleanups
- */
-
 void loader_cleanup()
 {
+  free_all_allocations(); 
   if (fd != -1)
   {
     close(fd);
@@ -70,10 +101,6 @@ void loader_cleanup()
 }
 
 int size_of_file;
-
-/*
- * some functions
- */
 int file_reader()
 {
   ssize_t read_the_file = read(fd, a, size_of_file); // read_the_file is equal to the number of bytes read in file
@@ -85,17 +112,9 @@ int file_reader()
   return 1;
 };
 
-/*
- * Load and run the ELF executable file
- */
-
 void load_and_run_elf(const char *exe)
 {
   fd = open(exe, O_RDONLY);
-
-  /*  @daku
-  error handling start from here
-  */
   if (fd == -1) // to check whether file descriptor is opened
   {
     perror("Error in opening elf file with file descriptor");
@@ -154,7 +173,7 @@ void load_and_run_elf(const char *exe)
   int result = _start();
   printf("User _start return value = %d\n", result);
   printf("No of page faults: %d\n", no_page_fault);
-  printf("Total memory alloacated: %d\n", total_mem_allocated);
+  printf("Total memory allocated: %d\n", total_mem_allocated);
   printf("Total memmory used: %d\n", total_mem_used);
   printf("Internal fragmentation: %.2f KB\n", (float)(total_mem_allocated - total_mem_used) / 1024);
   printf("Total page allocation: %d\n", no_page_allocation);
